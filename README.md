@@ -5,9 +5,6 @@ An End-to-End Meta-Enhanced Attention for Time Series Forecasting with Missing D
 Time series forecasting with missing values remains a critical challenge across diverse domains. While Transformer-based models excel with complete data, they suffer from "attention sink" where attention mechanisms disproportionately focus on missing data points, creating a self-reinforcing feedback loop that degrades performance. To address this, we propose MeaTS, a novel end-to-end Transformer-based framework specifically designed for robust multivariate time series forecasting with missing values. Our approach introduces two key innovations: (1) A meta-enhanced attention mechanism that dynamically adjusts attention weights by suppressing focus on missing values while amplifying attention to observed data, effectively mitigating the attention sink problem; (2) An extracted latent value module that transforms data with missing values into informative features through frequency-domain representations, enhancing data representation without explicit imputation. Extensive experiments demonstrate that Metaformer achieves a 19.86\% improvement in MAE compared to state-of-the-art models such as SDformer, GinAR+, and BiTGraph.
 
 
-![image](fig/metaformer_framework.png)
-
-
 ## Main Results
 
 **Main Results:** 

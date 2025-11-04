@@ -54,69 +54,7 @@ class FourierLayer(nn.Module):
 
 
 class FullAttention(nn.Module):
-    def __init__(self,
-                 n_embd,
-                 n_head,
-                 attn_pdrop=0.1,
-                 resid_pdrop=0.1,
-                 ):
-        super().__init__()
-        assert n_embd % n_head == 0
-        self.key = nn.Linear(n_embd, n_embd)
-        self.query = nn.Linear(n_embd, n_embd)
-        self.value = nn.Linear(n_embd, n_embd)
-        self.n_embd = n_embd
-        self.attn_drop = nn.Dropout(attn_pdrop)
-        self.resid_drop = nn.Dropout(resid_pdrop)
-        self.proj = nn.Linear(n_embd, n_embd)
-        self.n_head = n_head
-        self.memory_dict = self.construct_memory()
-        self.conv_f = nn.Conv1d(in_channels=2, out_channels=1, kernel_size=1, stride=1)
-        self.gate = nn.Sequential(
-            nn.Linear(n_embd, n_embd * 2),
-            nn.Dropout(attn_pdrop),
-            nn.ReLU(),
-            nn.Linear(n_embd * 2, n_embd),
-            nn.Dropout(attn_pdrop),
-            nn.ReLU()
-        )
-
-    def construct_memory(self):
-        memory_dict = nn.ParameterDict()
-        memory_dict['K'] = nn.Parameter(torch.randn(self.n_embd, self.n_embd), requires_grad=True)
-        memory_dict['Q'] = nn.Parameter(torch.randn(self.n_embd, self.n_embd), requires_grad=True)
-        memory_dict['V'] = nn.Parameter(torch.randn(self.n_embd, self.n_embd), requires_grad=True)
-
-        for param in memory_dict.values():
-            nn.init.xavier_normal_(param)
-        return memory_dict
-
-    def forward(self, x, mask=None):
-        B, T, C = x.size()
-        k = self.key(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-        q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-        v = self.value(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-        memory_k = k.transpose(1, 2).view(B * T, self.n_embd) @ self.memory_dict['K']
-        memory_v = v.transpose(1, 2).view(B * T, self.n_embd) @ self.memory_dict['V']
-        memory_q = q.transpose(1, 2).view(B * T, self.n_embd) @ self.memory_dict['Q']
-
-        memory_r = F.relu(self.conv_f(torch.stack([memory_q, memory_k], dim=1)).view(B*T, self.n_embd))
-        memory_D = memory_r.view(B, self.n_head, T, C // self.n_head) @ memory_r.view(B, self.n_head, C // self.n_head, T)
-
-        memory_weight = self.gate(memory_r)
-
-        qk = q @ k.transpose(-2, -1) @ memory_D
-        att = qk * (1.0 / math.sqrt(k.size(-1)))
-        att = F.softmax(att, dim=-1)
-
-        att = self.attn_drop(att)
-        imv = memory_v.view(B, self.n_head, T, C // self.n_head) + memory_weight.view(B, self.n_head, T, C // self.n_head)
-        v_ = v + imv
-        y = att @ v_
-
-        y = y.transpose(1, 2).contiguous().view(B, T, C)
-        att = att.mean(dim=1, keepdim=False)
-        y = self.resid_drop(self.proj(y))
+       #The code wil be avilable when this paper accepted by TII
 
         return y, att, q, k
 
@@ -406,4 +344,5 @@ class Model(nn.Module):
 
 
 if __name__ == '__main__':
+
     pass

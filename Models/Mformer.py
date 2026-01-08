@@ -54,11 +54,6 @@ class FourierLayer(nn.Module):
 
 
 class FullAttention(nn.Module):
-       #The code wil be avilable when this paper accepted by TII
-
-        return y, att, q, k
-
-class FeatureFusionBlock(nn.Module):
     def __init__(self,
                  n_embd,  # the embed dim
                  n_head,  # the number of heads
@@ -68,137 +63,65 @@ class FeatureFusionBlock(nn.Module):
         super().__init__()
         assert n_embd % n_head == 0
         # key, query, value projections for all heads
-        self.key_1 = nn.Linear(n_embd, n_embd)
-        self.query_1 = nn.Linear(n_embd, n_embd)
-        self.value_1 = nn.Linear(n_embd, n_embd)
-
-        self.key_2 = nn.Linear(n_embd, n_embd)
-        self.query_2 = nn.Linear(n_embd, n_embd)
-        self.value_2 = nn.Linear(n_embd, n_embd)
-
+        self.key = nn.Linear(n_embd, n_embd)
+        self.query = nn.Linear(n_embd, n_embd)
+        self.value = nn.Linear(n_embd, n_embd)
+        self.n_embd = n_embd
         # regularization
         self.attn_drop = nn.Dropout(attn_pdrop)
         self.resid_drop = nn.Dropout(resid_pdrop)
         # output projection
-        self.proj_1 = nn.Linear(n_embd, n_embd)
-        self.proj_2 = nn.Linear(n_embd, n_embd)
-
+        self.proj = nn.Linear(n_embd, n_embd)
         self.n_head = n_head
-        self.n_embd = n_embd
-        self.conv_f1 = nn.Conv1d(in_channels=2,out_channels=1,kernel_size=1,stride=1)
-        self.conv_f2 = nn.Conv1d(in_channels=2,out_channels=1,kernel_size=1,stride=1)
-        self.proj_3 = nn.Linear(n_embd, n_embd)
-
         self.memory_dict = self.construct_memory()
+        self.conv_f = nn.Conv1d(in_channels=2, out_channels=1, kernel_size=1, stride=1)
         self.gate = nn.Sequential(
-            nn.Linear(n_embd,n_embd*2),
+            nn.Linear(n_embd, n_embd * 2),
             nn.Dropout(attn_pdrop),
             nn.ReLU(),
-            nn.Linear(n_embd*2, n_embd),
+            nn.Linear(n_embd * 2, n_embd),
             nn.Dropout(attn_pdrop),
             nn.ReLU()
         )
-
     def construct_memory(self):
         memory_dict = nn.ParameterDict()
-        memory_dict['K'] = nn.Parameter(torch.randn(self.n_embd, self.n_embd), requires_grad=True)     # (M, d)
-        memory_dict['Q'] = nn.Parameter(torch.randn(self.n_embd, self.n_embd), requires_grad=True)    # project to query
-        memory_dict['V'] = nn.Parameter(torch.randn(self.n_embd, self.n_embd), requires_grad=True)    # project to query
+        memory_dict['K'] = nn.Parameter(torch.randn(self.n_embd, self.n_embd), requires_grad=True)  # (M, d)
+        memory_dict['Q'] = nn.Parameter(torch.randn(self.n_embd, self.n_embd), requires_grad=True)  # project to query
+        memory_dict['V'] = nn.Parameter(torch.randn(self.n_embd, self.n_embd), requires_grad=True)  # project to query
 
         for param in memory_dict.values():
             nn.init.xavier_normal_(param)
         return memory_dict
 
-    def forward(self, x1, x2, memory=0, mask=None):
-        B, E, N = x1.size()
-        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        k1 = self.key_1(x1).view(B, E, self.n_head, N // self.n_head).transpose(1, 2)  # (B, H, E, he)
-        q1 = self.query_1(x1).view(B, E, self.n_head, N // self.n_head).transpose(1, 2)
-        v1 = self.value_1(x1).view(B, E, self.n_head, N // self.n_head).transpose(1, 2)
+    def forward(self, x, mask=None):
+        B, T, C = x.size()
+        k = self.key(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
+        q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
+        v = self.value(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
+        memory_k = k.transpose(1, 2).view(B * T, self.n_embd) @ self.memory_dict['K']
+        memory_v = v.transpose(1, 2).view(B * T, self.n_embd) @ self.memory_dict['V']
+        memory_q = q.transpose(1, 2).view(B * T, self.n_embd) @ self.memory_dict['Q']
 
-        k2 = self.key_2(x2).view(B, E, self.n_head, N // self.n_head).transpose(1, 2)
-        q2 = self.query_2(x2).view(B, E, self.n_head, N // self.n_head).transpose(1, 2)
-        v2 = self.value_2(x2).view(B, E, self.n_head, N // self.n_head).transpose(1, 2)
+        memory_r = F.relu(self.conv_f(torch.stack([memory_q, memory_k], dim=1)).view(B*T,self.n_embd))  # memory_q1 @ memory_k2.transpose(-2, -1)
+        memory_D = memory_r.view(B, self.n_head, T, C // self.n_head) @ memory_r.view(B, self.n_head, C // self.n_head, T)
+        memory_weight = self.gate(memory_r)
 
-        memory_k1 = k1.transpose(1, 2).view(B*E,self.n_embd) @ self.memory_dict['K']
-        memory_k2 = k2.transpose(1, 2).view(B*E,self.n_embd) @ self.memory_dict['K']
-
-        memory_q1 = q1.transpose(1, 2).view(B*E,self.n_embd) @ self.memory_dict['Q']
-        memory_q2 = q2.transpose(1, 2).view(B*E,self.n_embd) @ self.memory_dict['Q']
-
-
-        memory_r1 = self.conv_f1(torch.stack([memory_q1, memory_k2], dim=1)).view(B*E,self.n_embd)  
-        memory_r2 = self.conv_f2(torch.stack([memory_q2, memory_k1], dim=1)).view(B*E,self.n_embd)
-        memory_D = memory_r1.view(B, self.n_head, E, N // self.n_head) @ memory_r2.view(B, self.n_head, N // self.n_head, E)
-        memory_v1 = v1.transpose(1, 2).view(B*E,self.n_embd) @ self.memory_dict['V']
-        memory_v2 = v2.transpose(1, 2).view(B*E,self.n_embd) @ self.memory_dict['V']
+        qk = q @ k.transpose(-2, -1) @ memory_D#
+        att = qk * (1.0 / math.sqrt(k.size(-1)))  # (B, nh, T, T)
+        att = F.softmax(att, dim=-1)  # (B, nh, T, T)
 
 
+        att = self.attn_drop(att)
+        imv = memory_v.view(B, self.n_head, T, C // self.n_head) + memory_weight.view(B, self.n_head, T, C // self.n_head) 
+        v_ = v + imv
+        y = att @ v_
 
-        memory_weight = self.gate(memory_r1+memory_r2)
-        memory_v1 =  memory_v1.view(B,self.n_head, N // self.n_head, E) @ memory_weight.view(B,self.n_head, E, N // self.n_head)
-        memory_v2 =  memory_v2.view(B,self.n_head, N // self.n_head, E) @ memory_weight.view(B,self.n_head, E, N // self.n_head)
+        y = y.transpose(1, 2).contiguous().view(B, T, C)  # re-assemble all head outputs side by side, (B, T, C)
+        att = att.mean(dim=1, keepdim=False)  # (B, T, T)
+        y = self.resid_drop(self.proj(y))
 
-        q1k2 = (q1 @ k2.transpose(-2, -1))
-        q2k1 = (q2 @ k1.transpose(-2, -1))
+        return y, att, q, k
 
-
-        att1 = (q1k2+memory_D) * (1.0 / math.sqrt(k2.size(-1)))  # (B, nh, T, T)
-        att2 = (q2k1+memory_D) * (1.0 / math.sqrt(k1.size(-1)))  # (B, nh, T, T)
-        # att1_ = (q1k2) * (1.0 / math.sqrt(k2.size(-1)))  # (B, nh, T, T)
-        # att2_ = (q1k2) * (1.0 / math.sqrt(k2.size(-1)))  # (B, nh, T, T)
-
-        att1 = F.softmax(att1, dim=-1)  # (B, nh, T, T)
-        att1 = self.attn_drop(att1)
-        enhaced_v1= v2 @ memory_v1
-        y1 = (att1 @ enhaced_v1)   # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-
-        att2 = F.softmax(att2, dim=-1)  # (B, nh, T, T)
-        att2 = self.attn_drop(att2)
-        enhaced_v2= v1 @ memory_v2
-
-        y2 = (att2 @ enhaced_v2)  # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs) + memory_V.view(B,self.n_head, T,  C // self.n_head)
-        y1 = y1.transpose(1, 2).contiguous().view(B, E, N)  # re-assemble all head outputs side by side, (B, T, C)
-        y2 = y2.transpose(1, 2).contiguous().view(B, E, N)  # re-assemble all head outputs side by side, (B, T, C)
-
-        att1 = att1.mean(dim=1, keepdim=False)  # (B, T, T)
-        att2 = att2.mean(dim=1, keepdim=False)  # (B, T, T)
-
-        # output projection
-        x1 = x1 + self.proj_1(y1)
-        x2 = x2 + self.proj_2(y2)
-        memory_out= memory#+self.proj_3(memory_V).view(B,T,C)
-
-        return x1, x2, memory_out, att1, att2
-        
-class FeatureFusion(nn.Module):
-    def __init__(
-            self,
-            n_embd,
-            n_head,
-            attn_pdrop=0.1,
-            resid_pdrop=0.1,
-            n_layer=1,
-            type='random',
-    ):
-        super().__init__()
-
-        self.blocks = nn.Sequential(*[FeatureFusionBlock(
-            n_embd=n_embd,
-            n_head=n_head,
-            attn_pdrop=attn_pdrop,
-            resid_pdrop=resid_pdrop,
-        ) for _ in range(n_layer)])
-
-        self.ConvFusion = nn.Linear(n_embd, n_embd)
-
-    def forward(self, x1, x2, padding_masks=None, label_emb=None):
-        memory_out = (x1+x2)/2
-        for block_idx in range(len(self.blocks)):
-            x1, x2, memory_out, att1, att2 = self.blocks[block_idx](x1, x2, memory=memory_out)
-        x = x1+x2
-        x = self.ConvFusion(x)
-        return x
 
 
 class EncoderBlock(nn.Module):
@@ -458,5 +381,6 @@ class Model(nn.Module):
 if __name__ == '__main__':
 
     pass
+
 
 

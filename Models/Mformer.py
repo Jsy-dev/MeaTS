@@ -9,50 +9,6 @@ from utils.model_utils import LearnablePositionalEncoding, Proj, AdaLayerNorm, T
 from utils.RevIN import RevIN
 
 
-class FourierLayer(nn.Module):
-    def __init__(self, d_model, low_freq=1, factor=1):
-        super().__init__()
-        self.d_model = d_model
-        self.factor = factor
-        self.low_freq = low_freq
-
-    def forward(self, x):
-        b, t, d = x.shape
-        x_freq = torch.fft.rfft(x, dim=1)
-
-        if t % 2 == 0:
-            x_freq = x_freq[:, self.low_freq:-1]
-            f = torch.fft.rfftfreq(t)[self.low_freq:-1]
-        else:
-            x_freq = x_freq[:, self.low_freq:]
-            f = torch.fft.rfftfreq(t)[self.low_freq:]
-
-        x_freq, index_tuple = self.topk_freq(x_freq)
-        f = repeat(f, 'f -> b f d', b=x_freq.size(0), d=x_freq.size(2)).to(x_freq.device)
-        f = rearrange(f[index_tuple], 'b f d -> b f () d').to(x_freq.device)
-        return self.extrapolate(x_freq, f, t)
-
-    def extrapolate(self, x_freq, f, t):
-        x_freq = torch.cat([x_freq, x_freq.conj()], dim=1)
-        f = torch.cat([f, -f], dim=1)
-        t = rearrange(torch.arange(t, dtype=torch.float),
-                      't -> () () t ()').to(x_freq.device)
-
-        amp = rearrange(x_freq.abs(), 'b f d -> b f () d')
-        phase = rearrange(x_freq.angle(), 'b f d -> b f () d')
-        x_time = amp * torch.cos(2 * math.pi * f * t + phase)
-        return reduce(x_time, 'b f t d -> b t d', 'sum')
-
-    def topk_freq(self, x_freq):
-        length = x_freq.shape[1]
-        top_k = int(self.factor * math.log(length))
-        values, indices = torch.topk(x_freq.abs(), top_k, dim=1, largest=True, sorted=True)
-        mesh_a, mesh_b = torch.meshgrid(torch.arange(x_freq.size(0)), torch.arange(x_freq.size(2)), indexing='ij')
-        index_tuple = (mesh_a.unsqueeze(1), indices, mesh_b.unsqueeze(1))
-        x_freq = x_freq[index_tuple]
-        return x_freq, index_tuple
-
-
 class FullAttention(nn.Module):
     def __init__(self,
                  n_embd,  # the embed dim
@@ -121,8 +77,6 @@ class FullAttention(nn.Module):
         y = self.resid_drop(self.proj(y))
 
         return y, att, q, k
-
-
 
 class EncoderBlock(nn.Module):
     def __init__(self,
@@ -381,6 +335,7 @@ class Model(nn.Module):
 if __name__ == '__main__':
 
     pass
+
 
 
 

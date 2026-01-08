@@ -127,7 +127,7 @@ class FeatureFusionBlock(nn.Module):
         memory_q2 = q2.transpose(1, 2).view(B*E,self.n_embd) @ self.memory_dict['Q']
 
 
-        memory_r1 = self.conv_f1(torch.stack([memory_q1, memory_k2], dim=1)).view(B*E,self.n_embd)  # memory_q1 @ memory_k2.transpose(-2, -1)
+        memory_r1 = self.conv_f1(torch.stack([memory_q1, memory_k2], dim=1)).view(B*E,self.n_embd)  
         memory_r2 = self.conv_f2(torch.stack([memory_q2, memory_k1], dim=1)).view(B*E,self.n_embd)
         memory_D = memory_r1.view(B, self.n_head, E, N // self.n_head) @ memory_r2.view(B, self.n_head, N // self.n_head, E)
         memory_v1 = v1.transpose(1, 2).view(B*E,self.n_embd) @ self.memory_dict['V']
@@ -151,7 +151,7 @@ class FeatureFusionBlock(nn.Module):
         att1 = F.softmax(att1, dim=-1)  # (B, nh, T, T)
         att1 = self.attn_drop(att1)
         enhaced_v1= v2 @ memory_v1
-        y1 = (att1 @ enhaced_v1)   # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs) + memory_V.view(B,self.n_head, T,  C // self.n_head)
+        y1 = (att1 @ enhaced_v1)   # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
 
         att2 = F.softmax(att2, dim=-1)  # (B, nh, T, T)
         att2 = self.attn_drop(att2)
@@ -458,4 +458,5 @@ class Model(nn.Module):
 if __name__ == '__main__':
 
     pass
+
 

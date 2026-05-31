@@ -228,10 +228,57 @@ class Transpose(nn.Module):
 
 
 class Embedding(nn.Module):
-    # The code will be available when this paper accepted by TII
+    def __init__(self, out_dim, patch_size, patch_stride, num=2, resid_pdrop=0., type=0, alig_dim=None):
+        super().__init__()
+        self.patch_size = patch_size
+        self.patch_stride = patch_stride
+        self.type = type
+        self.alig_dim =alig_dim
+        if alig_dim is not None:
+            self.proj = nn.Linear(alig_dim[0], alig_dim[1])
+        if type==0:
+            self.sequential = nn.Sequential(
+                nn.Conv1d(in_channels=1, out_channels=out_dim, kernel_size=patch_size, stride=patch_stride),
+                nn.BatchNorm1d(out_dim),
+                nn.GELU(),
+                nn.Dropout(p=resid_pdrop),
+            )
+            for _ in range(num):
+                self.sequential.append(nn.Conv1d(out_dim, out_dim, 1, stride=1))
+                self.sequential.append(nn.GELU())
+                self.sequential.append(nn.BatchNorm1d(out_dim))
+                self.sequential.append(nn.Dropout(p=resid_pdrop))
+        else:
+            self.sequential = nn.Sequential(
+                nn.Linear(patch_size, out_dim),
+                # nn.ReLU(),
+            )
+            for _ in range(num):
+                self.sequential.append(nn.Linear(out_dim, out_dim))
+                # self.sequential.append(nn.Dropout(0.1))
+                # self.sequential.append(nn.ReLU())
+
+    def forward(self, x):
+        x = x.permute(0, 2, 1)
+        x = x.unsqueeze(-2)
+        B, M, D, N = x.shape
+        if self.type == 0:
+            x = x.reshape(B * M, D, N)
+            if self.patch_size != self.patch_stride:
+                pad_len = self.patch_size - self.patch_stride
+                pad = x[:, :, -1:].repeat(1, 1, pad_len)
+                x = torch.cat([x, pad], dim=-1)
+            x = self.sequential(x)
+            _, D_, N_ = x.shape
+            x = x.reshape(B, M, D_, N_)
+            if self.alig_dim is not None:
+                x = self.proj(x)
+
+        elif self.type == 1:
+            x = x.reshape(B, M, 1, -1).squeeze(-2)
+            x = x.unfold(dimension=-1, size=self.patch_size, step=self.patch_stride)
+            x = self.sequential(x)
         return x
-
-
 
 class Proj(nn.Module):
     def __init__(self, in_dim, out_dim, num=1, resid_pdrop=0.):
@@ -251,8 +298,30 @@ class Proj(nn.Module):
 
 
 class FreqProj(nn.Module):
-        # The code will be available when this paper accepted by TII
-        return self.sequential(x).transpose(1, 2)
+    def __init__(self, in_dim, out_dim, num=1, resid_pdrop=0.):
+        super().__init__()
+        self.fft_dim = (in_dim // 2) + 1  
+        self.freq_sequential = nn.Sequential(
+            nn.Linear(self.fft_dim, out_dim),
+            nn.Dropout(p=resid_pdrop),
+            nn.GELU(),
+        )
+
+        for _ in range(num):
+            self.freq_sequential.append(nn.Linear(out_dim, out_dim))
+            self.freq_sequential.append(nn.Dropout(p=resid_pdrop))
+            self.freq_sequential.append(nn.GELU())
+
+    def forward(self, x):
+        x_freq = torch.fft.rfft(x, dim=-1)
+        real_part = x_freq.real
+        imag_part = x_freq.imag
+        real_transformed = self.freq_sequential(real_part)
+        imag_transformed = self.freq_sequential(imag_part)
+        x_freq_transformed = torch.complex(real_transformed, imag_transformed)
+        x_time = torch.fft.irfft(x_freq_transformed, n=x.size(-1), dim=-1)
+        return x_time
+
 
 
 class Transformer_MLP(nn.Module):
